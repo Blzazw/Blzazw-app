@@ -89,6 +89,12 @@ function startPythonBackend() {
   const env = { ...process.env }
   env.DEEPSEEK_API_KEY = apiKey || ''
   env.BLZAZW_SESSIONS_DIR = path.join(app.getPath('userData'), 'sessions')
+  // 强制 Python 使用系统的 SSL 证书和代理设置
+  env.SSL_CERT_FILE = process.env.SSL_CERT_FILE || ''
+  env.REQUESTS_CA_BUNDLE = process.env.REQUESTS_CA_BUNDLE || ''
+  env.HTTPS_PROXY = process.env.HTTPS_PROXY || process.env.HTTPS_PROXY || ''
+  env.HTTP_PROXY = process.env.HTTP_PROXY || process.env.http_proxy || ''
+  env.NO_PROXY = process.env.NO_PROXY || ''
   pythonProcess = spawn(getPythonExe(), ['run.py', '--server'], {
     cwd: agentDir, stdio: ['pipe', 'pipe', 'pipe'], env,
   })

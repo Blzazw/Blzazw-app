@@ -11,16 +11,15 @@ from openai import AsyncOpenAI
 
 def _get_client() -> AsyncOpenAI:
     """创建并返回 DeepSeek API 客户端"""
+    import sys
     api_key = os.getenv("DEEPSEEK_API_KEY")
     base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 
     if not api_key or api_key == "sk-your-api-key-here":
-        raise ValueError(
-            "未配置 DeepSeek API Key。\n"
-            "请前往 https://platform.deepseek.com/api_keys 获取 Key，\n"
-            "然后编辑项目根目录的 .env 文件填入 DEEPSEEK_API_KEY。"
-        )
+        print("[Blzazw] 未配置 API Key", flush=True)
+        raise ValueError("未配置 DeepSeek API Key")
 
+    print(f"[Blzazw] API Key 已配置: {api_key[:5]}...{api_key[-4:]}", flush=True)
     return AsyncOpenAI(api_key=api_key, base_url=base_url)
 
 
@@ -64,38 +63,73 @@ async def chat(
     tools: list[dict] | None = None,
 ) -> ChatResponse:
     """
-    非流式调用 LLM。
-    返回完整的响应，适用于需要解析工具调用的场景。
+    使用 urllib 直接调用 DeepSeek API（兼容性最好的方式）
     """
-    client = _get_client()
-    model = _get_model()
+    import json
     import os
-    key = os.getenv("DEEPSEEK_API_KEY", "")
-    print(f"[Blzazw] LLM call: model={model}, key_set={'yes' if key and len(key) > 8 else 'no'}, tools={len(tools) if tools else 0}")
+    import urllib.request
 
-    kwargs = {
-        "model": model,
-        "messages": messages,
-        "timeout": 120,
-    }
+    api_key = os.getenv("DEEPSEEK_API_KEY", "")
+    model = _get_model()
+    base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+
+    body = {"model": model, "messages": messages}
     if tools:
-        kwargs["tools"] = tools
+        body["tools"] = tools
 
-    # 自动重试两次（应对 VPN 不稳定）
+    data_bytes = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        f"{base_url}/chat/completions",
+        data=data_bytes,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+
+    print(f"[Blzazw] LLM call: model={model}, key_set={'yes' if api_key and len(api_key) > 8 else 'no'}, tools={len(tools) if tools else 0}", flush=True)
+
     max_attempts = 3
     for attempt in range(max_attempts):
         try:
-            response = await client.chat.completions.create(**kwargs)
-            result = _parse_response(response)
-            print(f"[Blzazw] LLM response: has_tool_calls={result.has_tool_calls()}, content_len={len(result.content or '')}")
+            # urllib 是同步的，用线程池避免阻塞事件循环
+            import asyncio
+            resp_data = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: urllib.request.urlopen(req, timeout=60).read()
+            )
+            data = json.loads(resp_data)
+            result = _parse_httpx_response(data)
+            print(f"[Blzazw] LLM response: has_tool_calls={result.has_tool_calls()}, content_len={len(result.content or '')}", flush=True)
             return result
         except Exception as e:
-            print(f"[Blzazw] LLM error (attempt {attempt+1}/{max_attempts}): {type(e).__name__}: {e}")
+            print(f"[Blzazw] LLM error (attempt {attempt+1}/{max_attempts}): {type(e).__name__}: {e}", flush=True)
             if attempt < max_attempts - 1:
-                import asyncio
                 await asyncio.sleep(2)
                 continue
             raise
+
+
+def _parse_httpx_response(data: dict) -> ChatResponse:
+    """解析 httpx 响应的 JSON 为 ChatResponse"""
+    choice = data["choices"][0]
+    msg = choice.get("message", {})
+    content = msg.get("content")
+
+    tool_calls = None
+    if msg.get("tool_calls"):
+        tool_calls = []
+        for tc in msg["tool_calls"]:
+            try:
+                args = json.loads(tc["function"]["arguments"])
+            except (json.JSONDecodeError, TypeError, KeyError):
+                args = {}
+            tool_calls.append(ToolCall(
+                id=tc.get("id", ""),
+                name=tc.get("function", {}).get("name", ""),
+                arguments=args,
+            ))
+
+    return ChatResponse(content=content, tool_calls=tool_calls)
 
 
 async def chat_stream(
