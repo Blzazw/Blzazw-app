@@ -37,6 +37,12 @@
       "target": ["nsis"],
       "icon": "build/icon.ico"
     },
+    "publish": {
+      "provider": "github",
+      "owner": "Blzazw",
+      "repo": "Blzazw-app",
+      "releaseType": "release"
+    },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
@@ -67,6 +73,7 @@
   },
   "dependencies": {
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "electron-updater": "^6.0.0"
   }
 }
