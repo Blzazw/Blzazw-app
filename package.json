@@ -28,7 +28,8 @@
         "to": "agent",
         "filter": [
           "**/*",
-          "!__pycache__/**"
+          "!__pycache__/**",
+          "!sessions/**"
         ]
       }
     ],
