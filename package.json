@@ -1,0 +1,71 @@
+{
+  "name": "blzazw-app",
+  "version": "1.0.0",
+  "description": "Blzazw - 一个有温度、有判断力的个人助手",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev:renderer": "vite",
+    "dev:electron": "electron .",
+    "dev": "npm run dev:renderer & sleep 2 & npm run dev:electron",
+    "build:renderer": "vite build",
+    "build": "npm run build:renderer",
+    "pack": "npm run build && electron-builder --win --x64",
+    "dist": "npm run build && electron-builder --win --x64 --publish never"
+  },
+  "build": {
+    "appId": "com.blzazw.assistant",
+    "productName": "Blzazw",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "agent",
+        "to": "agent",
+        "filter": [
+          "**/*",
+          "!__pycache__/**"
+        ]
+      }
+    ],
+    "win": {
+      "target": ["nsis"],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "runAfterFinish": true
+    }
+  },
+  "keywords": [
+    "agent",
+    "ai",
+    "assistant"
+  ],
+  "author": "Blzazw",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.0.0",
+    "concurrently": "^9.0.0",
+    "electron": "^33.0.0",
+    "electron-builder": "^26.15.0",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0",
+    "vite-plugin-electron": "^0.28.0",
+    "vite-plugin-electron-renderer": "^0.14.0"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }
+}
