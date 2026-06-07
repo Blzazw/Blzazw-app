@@ -13,6 +13,7 @@ const path = require('path')
 const { spawn } = require('child_process')
 const http = require('http')
 const fs = require('fs')
+const { autoUpdater } = require('electron-updater')
 
 // ──────────── 状态 ────────────
 let mainWindow = null
@@ -21,6 +22,64 @@ let pythonProcess = null
 const PYTHON_PORT = 8080
 const PYTHON_URL = `http://127.0.0.1:${PYTHON_PORT}`
 const isDev = !app.isPackaged
+
+// ──────────── 自动更新 ────────────
+autoUpdater.autoDownload = false
+autoUpdater.autoInstallOnAppQuit = true
+
+function setupAutoUpdate() {
+  if (isDev) {
+    console.log('[Blzazw] 开发模式，跳过自动更新检查')
+    return
+  }
+
+  // 检查更新（静默）
+  autoUpdater.checkForUpdates()
+
+  autoUpdater.on('update-available', (info) => {
+    console.log('[Blzazw] 发现新版本:', info.version)
+    // 通知前端有新版本
+    if (mainWindow) {
+      mainWindow.webContents.send('update-available', info.version)
+    }
+  })
+
+  autoUpdater.on('update-not-available', () => {
+    console.log('[Blzazw] 已是最新版本')
+  })
+
+  autoUpdater.on('download-progress', (progress) => {
+    const pct = Math.round(progress.percent)
+    if (mainWindow) {
+      mainWindow.webContents.send('update-progress', pct)
+    }
+  })
+
+  autoUpdater.on('update-downloaded', () => {
+    console.log('[Blzazw] 更新已下载，准备安装')
+    if (mainWindow) {
+      mainWindow.webContents.send('update-downloaded')
+    }
+  })
+
+  autoUpdater.on('error', (err) => {
+    console.error('[Blzazw] 自动更新错误:', err.message)
+  })
+}
+
+// IPC：触发更新下载
+ipcMain.handle('start-update-download', () => {
+  autoUpdater.downloadUpdate()
+  return { ok: true }
+})
+
+// IPC：立即安装更新
+ipcMain.handle('install-update', () => {
+  setImmediate(() => {
+    autoUpdater.quitAndInstall()
+  })
+  return { ok: true }
+})
 
 function getPythonDir() {
   if (isDev) return path.join(__dirname, '..', 'agent')
@@ -277,6 +336,7 @@ app.whenReady().then(async () => {
 
   createWindow()
   createTray()
+  setupAutoUpdate()
 
   app.on('activate', () => {
     if (mainWindow === null) createWindow()

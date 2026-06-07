@@ -10,6 +10,20 @@ contextBridge.exposeInMainWorld('blzazw', {
   hasApiKey: () => ipcRenderer.invoke('has-api-key'),
   saveApiKey: (key) => ipcRenderer.invoke('save-api-key', key),
   restartBackend: () => ipcRenderer.invoke('restart-backend'),
+
+  // 自动更新
+  onUpdateAvailable: (callback) => {
+    ipcRenderer.on('update-available', (e, version) => callback(version))
+  },
+  onUpdateProgress: (callback) => {
+    ipcRenderer.on('update-progress', (e, pct) => callback(pct))
+  },
+  onUpdateDownloaded: (callback) => {
+    ipcRenderer.on('update-downloaded', () => callback())
+  },
+  startUpdateDownload: () => ipcRenderer.invoke('start-update-download'),
+  installUpdate: () => ipcRenderer.invoke('install-update'),
+
   on: (channel, callback) => {
     const valid = ['python-status']
     if (valid.includes(channel)) {
