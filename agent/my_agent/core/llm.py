@@ -26,7 +26,7 @@ def _get_client() -> AsyncOpenAI:
 
 def _get_model() -> str:
     """获取模型名称"""
-    return os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+    return os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
 
 
 # ──────────────────────────── 类型定义 ────────────────────────────

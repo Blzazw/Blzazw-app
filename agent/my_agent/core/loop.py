@@ -70,8 +70,11 @@ async def agent_process(
         - done: 处理完成
         - error: 发生错误
     """
-    # 注入系统人格（含当前安全模式信息）
-    worker_messages = _prepare_messages(messages, mode=mode)
+    try:
+        worker_messages = _prepare_messages(messages, mode=mode, session_id=session_id)
+    except Exception as e:
+        yield {"type": "error", "message": f"准备消息失败: {e}"}
+        return
 
     # 获取工具定义
     tools = registry.to_openai_tools()
@@ -190,7 +193,7 @@ async def agent_process(
     yield {"type": "done"}
 
 
-def _prepare_messages(messages: list[dict], mode: str = MODE_SAFE) -> list[dict]:
+def _prepare_messages(messages: list[dict], mode: str = MODE_SAFE, session_id: str | None = None) -> list[dict]:
     """准备消息：注入 system prompt、当前安全模式，并做截断"""
     mode_hints = {
         MODE_SAFE: (
@@ -211,15 +214,41 @@ def _prepare_messages(messages: list[dict], mode: str = MODE_SAFE) -> list[dict]
     }
     mode_hint = mode_hints.get(mode, mode_hints[MODE_SAFE])
 
+    # 加载长期记忆
+    from my_agent.core.context import MemoryStore
+    import os
+    _mem_dir = os.getenv("BLZAZW_SESSIONS_DIR", "sessions")
+    _ms = MemoryStore(_mem_dir)
+    memory_text = _ms.to_prompt()
+
     system_content = SYSTEM_PROMPT + "\n\n" + mode_hint
+    if memory_text:
+        system_content += "\n\n" + memory_text
+    # 注入对话摘要
+    from my_agent.core.context import ConversationStore as _CS
+    _summary = _CS().get_summary(session_id)
+    if _summary:
+        system_content += f"\n\n[对话摘要 — 本次对话之前的历史概要：]\n{_summary}"
+
     result = [{"role": "system", "content": system_content}]
 
     # 过滤掉已存在的 system 消息
     user_msgs = [m for m in messages if m.get("role") != "system"]
 
-    # 简单截断：保留最近的 50 条消息
-    if len(user_msgs) > 50:
-        user_msgs = user_msgs[-50:]
+    from my_agent.core.context import MAX_MESSAGES, estimate_tokens
+
+    # 用 token 预算截断而非硬性条数限制
+    total_tokens = sum(estimate_tokens(json.dumps(m, ensure_ascii=False)) for m in user_msgs)
+    if total_tokens > 40000 or len(user_msgs) > MAX_MESSAGES:
+        kept = []
+        used = 0
+        for m in reversed(user_msgs):
+            t = estimate_tokens(json.dumps(m, ensure_ascii=False))
+            if used + t > 40000 or len(kept) >= MAX_MESSAGES:
+                break
+            kept.insert(0, m)
+            used += t
+        user_msgs = kept
 
     result.extend(user_msgs)
     return result

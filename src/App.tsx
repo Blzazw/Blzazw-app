@@ -3,12 +3,13 @@ import Sidebar from './components/Sidebar'
 import InputArea from './components/InputArea'
 import ConfirmDialog from './components/ConfirmDialog'
 import {
-  ChatMessage, SessionInfo, SecurityMode,
+  ChatMessage, SessionInfo, SecurityMode, API_BASE,
   MODE_LABELS, ToolEvent, ToolResultEvent,
 } from './types'
 import {
   listSessions, newSession, getSessionMessages,
   sendChatMessage, confirmTool, setMode, clearSession,
+  getModels, setModel as setApiModel, getDiagnose,
 } from './api'
 
 /* ──────────── Markdown 渲染 ──────────── */
@@ -101,6 +102,8 @@ export default function App() {
   const [settingsKey, setSettingsKey] = useState('')
   const [savingKey, setSavingKey] = useState(false)
   const [keyError, setKeyError] = useState<string | null>(null)
+  const [currentModel, setCurrentModel] = useState('deepseek-v4-flash')
+  const [availableModels, setAvailableModels] = useState<{id:string;name:string;desc:string}[]>([])
 
   // 流式回复状态
   const [streamContent, setStreamContent] = useState('')
@@ -127,7 +130,33 @@ export default function App() {
     checkApiKey()
     loadSessions()
     loadMessages('default')
+    loadModels()
   }, [])
+
+  /* ── 加载模型列表 ── */
+  const loadModels = async () => {
+    try {
+      const data = await getModels()
+      setCurrentModel(data.current)
+      setAvailableModels(data.models)
+    } catch (e) { /* ignore */ }
+  }
+
+  const cycleModel = async () => {
+    const ids = availableModels.map(m => m.id)
+    const idx = ids.indexOf(currentModel)
+    const next = ids[(idx + 1) % ids.length]
+    setCurrentModel(next)
+    try {
+      await setApiModel(next)
+      const m = availableModels.find(x => x.id === next)
+      const hintMsg: ChatMessage = {
+        role: 'assistant',
+        content: `系统：模型已切换为 ${m?.name || next} — ${m?.desc || ''}`,
+      }
+      setMessages((prev) => [...prev, hintMsg])
+    } catch (e) { /* ignore */ }
+  }
 
   /* ── 检查 API Key ── */
   const checkApiKey = async () => {
@@ -161,8 +190,24 @@ export default function App() {
     }
   }
 
-  /* ── 切换会话 ── */
+  /* ── 切换会话（打断前先保存已回复的内容） ── */
   const selectSession = useCallback(async (id: string) => {
+    // 如果当前有正在流式输出的内容，先保存到会话历史
+    const partialContent = streamContentRef.current
+    if (partialContent && currentSession !== id) {
+      try {
+        // 通过后端保存不完整的 assistant 回复
+        await fetch(`${API_BASE}/api/sessions/${currentSession}/messages`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            role: 'assistant',
+            content: partialContent + '\n\n[回复被中断，因为你切换了对话]',
+          }),
+        })
+      } catch (e) { /* ignore */ }
+    }
+
     // 打断进行中的请求
     if (abortRef.current) {
       abortRef.current.abort()
@@ -197,7 +242,7 @@ export default function App() {
     } catch (e) { /* ignore */ }
   }
 
-  /* ── 切换模式 ── */
+  /* ── 切换模式（即时显示通知） ── */
   const cycleMode = async () => {
     const modes: SecurityMode[] = ['safe', 'trusted', 'sovereign']
     const idx = modes.indexOf(mode)
@@ -205,6 +250,12 @@ export default function App() {
     setModeState(next)
     try {
       await setMode(currentSession, next)
+      // 立即在聊天中显示模式切换提示
+      const hintMsg: ChatMessage = {
+        role: 'assistant',
+        content: `系统：安全模式已切换为【${MODE_LABELS[next].icon} ${MODE_LABELS[next].name}】— ${MODE_LABELS[next].desc}`,
+      }
+      setMessages((prev) => [...prev, hintMsg])
     } catch (e) { /* ignore */ }
   }
 
@@ -281,6 +332,38 @@ export default function App() {
 
     // 重新加载会话列表
     loadSessions()
+  }
+
+  /* ── 导出诊断日志 ── */
+  const handleExportLog = async () => {
+    try {
+      const diagnose = await getDiagnose()
+      const logContent = JSON.stringify({
+        time: new Date().toISOString(),
+        version: '1.0.0',
+        diagnose,
+        browserInfo: navigator.userAgent,
+      }, null, 2)
+
+      // 通过 Blob 下载
+      const blob = new Blob([logContent], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `blzazw-log-${Date.now()}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+
+      const hintMsg: ChatMessage = {
+        role: 'assistant',
+        content: '系统：诊断日志已导出，请将生成的 .json 文件发送给开发者。',
+      }
+      setMessages((prev) => [...prev, hintMsg])
+    } catch (e) {
+      console.error('Export log failed:', e)
+    }
   }
 
   /* ── 设置 API Key ── */
@@ -482,6 +565,9 @@ export default function App() {
             <button className={`mode-badge ${mode}`} onClick={cycleMode}>
               {modeInfo.icon} {modeInfo.name}
             </button>
+            <button className="model-badge" onClick={cycleModel} title={availableModels.find(m=>m.id===currentModel)?.desc || ''}>
+              {availableModels.find(m=>m.id===currentModel)?.name || currentModel}
+            </button>
           </div>
         </header>
 
@@ -541,6 +627,17 @@ export default function App() {
                   platform.deepseek.com
                 </a>
                 {' '}获取 API Key
+              </p>
+              <hr style={{border: 'none', borderTop: '1px solid var(--border)', margin: '16px 0'}} />
+              <div className="confirm-actions" style={{justifyContent: 'flex-start'}}>
+                <button className="btn-deny" onClick={handleExportLog} style={{fontSize: 12}}>
+                  导出诊断日志
+                </button>
+              </div>
+              <p style={{marginTop: 16, fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', lineHeight: 1.6}}>
+                Blzazw v1.0.0<br/>
+                作者: Blzazw Joe<br/>
+                联系: 3450383418@qq.com
               </p>
             </div>
             <div className="confirm-actions">
@@ -698,6 +795,19 @@ export default function App() {
         .mode-badge.safe { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); }
         .mode-badge.trusted { border-color: #7ab8e0; color: #7ab8e0; background: rgba(122,184,224,0.1); }
         .mode-badge.sovereign { border-color: var(--success); color: var(--success); background: rgba(106,191,138,0.1); }
+        .model-badge {
+          font-size: 11px;
+          padding: 4px 12px;
+          border-radius: 20px;
+          cursor: pointer;
+          transition: var(--transition);
+          border: 1px solid var(--border);
+          background: transparent;
+          color: var(--text-muted);
+          font-family: var(--font-body);
+          white-space: nowrap;
+        }
+        .model-badge:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); }
         @media (max-width: 768px) {
           .menu-btn { display: flex; }
         }

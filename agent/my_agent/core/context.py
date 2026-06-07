@@ -8,15 +8,21 @@ import os
 import time
 from pathlib import Path
 
-# 假设每 token 约 4 个中文字符
-MAX_TOKENS = 32000
-RESERVE_TOKENS = 4000  # 为回复预留的 token
+# 更准确的 token 估算（中英文混合）
+MAX_TOKENS = 64000  # 扩大上下文预算
+RESERVE_TOKENS = 8000
 MAX_CONTEXT_TOKENS = MAX_TOKENS - RESERVE_TOKENS
 
 
 def estimate_tokens(text: str) -> int:
-    """估算一段文本的 token 数（粗略）"""
-    return len(text)
+    """估算 token 数"""
+    if not text:
+        return 0
+    return max(1, len(text) // 2)
+
+
+# 最大保留消息数
+MAX_MESSAGES = 200
 
 
 def trim_messages(messages: list[dict], max_tokens: int = MAX_CONTEXT_TOKENS) -> list[dict]:
@@ -47,13 +53,68 @@ def trim_messages(messages: list[dict], max_tokens: int = MAX_CONTEXT_TOKENS) ->
     return system_msgs + kept
 
 
+class MemoryStore:
+    """长期记忆存储。存储用户的关键信息，跨对话持久化。"""
+    def __init__(self, store_dir: str | None = None):
+        import os
+        if store_dir is None:
+            store_dir = os.getenv("BLZAZW_SESSIONS_DIR", "sessions")
+        self.memory_file = Path(store_dir) / "memory.json"
+        self._memories: list[dict] = []
+        self._load()
+
+    def _load(self):
+        if self.memory_file.exists():
+            try:
+                self._memories = json.loads(self.memory_file.read_text(encoding="utf-8"))
+            except Exception:
+                self._memories = []
+
+    def save(self):
+        self.memory_file.parent.mkdir(parents=True, exist_ok=True)
+        self.memory_file.write_text(json.dumps(self._memories, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def add_memory(self, key: str, value: str):
+        """添加或更新一条记忆"""
+        for m in self._memories:
+            if m["key"] == key:
+                m["value"] = value
+                m["time"] = str(__import__("datetime").datetime.now())
+                self.save()
+                return
+        self._memories.append({"key": key, "value": value, "time": str(__import__("datetime").datetime.now())})
+        self.save()
+
+    def get_all(self) -> str:
+        """获取所有记忆的文本描述"""
+        if not self._memories:
+            return "暂无已保存的用户信息。"
+        lines = ["关于用户，我了解到以下信息："]
+        for m in self._memories:
+            lines.append(f"- {m['key']}: {m['value']}")
+        return "\n".join(lines)
+
+    def to_prompt(self) -> str:
+        """生成记忆提示文本，注入到系统提示词中"""
+        if not self._memories:
+            return ""
+        parts = ["[长期记忆 — 以下是你之前了解到关于用户的信息：]"]
+        for m in self._memories:
+            parts.append(f"{m['key']}: {m['value']}")
+        return "\n".join(parts)
+
+
 class ConversationStore:
     """
     简单的会话存储。
     每个会话是一个 .jsonl 文件，保存在 sessions/ 目录下。
     """
 
-    def __init__(self, session_dir: str = "sessions"):
+    def __init__(self, session_dir: str | None = None):
+        import os
+        if session_dir is None:
+            # 优先使用环境变量（Electron 传入的用户数据目录）
+            session_dir = os.getenv("BLZAZW_SESSIONS_DIR", "sessions")
         self.session_dir = Path(session_dir)
         self.session_dir.mkdir(parents=True, exist_ok=True)
 
@@ -88,6 +149,20 @@ class ConversationStore:
             "content": str(content),
         }
         self.append_message(session_id, msg)
+
+    def get_summary(self, session_id: str) -> str:
+        """获取或生成会话摘要"""
+        # 摘要存储在同名的 .summary 文件中
+        summary_path = self.session_dir / f"{session_id}.summary"
+        if summary_path.exists():
+            return summary_path.read_text(encoding="utf-8").strip()
+        return ""
+
+    def save_summary(self, session_id: str, summary: str):
+        """保存会话摘要"""
+        if summary:
+            path = self.session_dir / f"{session_id}.summary"
+            path.write_text(summary, encoding="utf-8")
 
     def list_sessions(self) -> list[dict]:
         """列出所有会话"""

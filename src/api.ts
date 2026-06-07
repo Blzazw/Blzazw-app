@@ -52,6 +52,26 @@ export async function getModes() {
   return get('/api/modes')
 }
 
+export async function getModels(): Promise<{ models: { id: string; name: string; desc: string }[]; current: string }> {
+  return get('/api/models')
+}
+
+export async function setModel(model: string) {
+  return post('/api/model', { model })
+}
+
+export async function getDiagnose(): Promise<any> {
+  return get('/api/diagnose')
+}
+
+export async function getMemory(): Promise<{ memories: string }> {
+  return get('/api/memory')
+}
+
+export async function saveMemory(key: string, value: string) {
+  return post('/api/memory', { key, value })
+}
+
 /* ──────────── 工具确认 ──────────── */
 
 export async function confirmTool(sessionId: string, toolCallId: string, approved: boolean) {
