@@ -33,9 +33,6 @@ function setupAutoUpdate() {
     return
   }
 
-  // 检查更新（静默）
-  autoUpdater.checkForUpdates()
-
   autoUpdater.on('update-available', (info) => {
     console.log('[Blzazw] 发现新版本:', info.version)
     // 通知前端有新版本
@@ -64,6 +61,11 @@ function setupAutoUpdate() {
 
   autoUpdater.on('error', (err) => {
     console.error('[Blzazw] 自动更新错误:', err.message)
+  })
+
+  // 捕获 checkForUpdates 的未处理异常（Release 中没有 latest.yml 时）
+  autoUpdater.checkForUpdates().catch(err => {
+    console.log('[Blzazw] 自动更新检查跳过（首次 Release 无 latest.yml 是正常的）')
   })
 }
 
@@ -155,11 +157,10 @@ function startPythonBackend() {
   const apiKey = getApiKey()
   console.log(`[Blzazw] 启动 Python 后端: ${agentDir}`)
 
-  // 只传必要的环境变量，不传父进程的 PATH/APPDATA 等，彻底隔离
-  const env = {
-    DEEPSEEK_API_KEY: apiKey || '',
-    PATH: process.env.PATH || '',
-  }
+  // 从父进程继承大部分环境变量（删掉可能泄漏 DEEPSEEK_API_KEY 的源头）
+  const env = { ...process.env }
+  // 覆盖/确保 DEEPSEEK_API_KEY 是用户自己设置的
+  env.DEEPSEEK_API_KEY = apiKey || ''
 
   pythonProcess = spawn(getPythonExe(), ['run.py', '--server'], {
     cwd: agentDir,
@@ -192,7 +193,7 @@ function stopPythonBackend() {
   }
 }
 
-function waitForPython(retries = 30) {
+function waitForPython(retries = 60) {
   return new Promise((resolve, reject) => {
     const check = (attempt) => {
       http.get(`${PYTHON_URL}/api/health`, (res) => {
@@ -294,7 +295,7 @@ ipcMain.handle('save-api-key', async (e, key) => {
   try {
     const testRes = await fetch('https://api.deepseek.com/v1/models', {
       headers: { 'Authorization': `Bearer ${key}` },
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(30000),
     })
     if (!testRes.ok) {
       const body = await testRes.text().catch(() => '')
@@ -311,8 +312,16 @@ ipcMain.handle('save-api-key', async (e, key) => {
   const ok = setApiKey(key)
   if (ok) {
     stopPythonBackend()
-    setTimeout(() => startPythonBackend(), 500)
-    return { ok: true }
+    // 等后端完全重启后再返回
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    startPythonBackend()
+    // 等待后端就绪（最多 15 秒）
+    try {
+      await waitForPython()
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: '后端启动超时，请重试' }
+    }
   }
   return { ok: false, error: 'Key 保存失败' }
 })

@@ -69,16 +69,33 @@ async def chat(
     """
     client = _get_client()
     model = _get_model()
+    import os
+    key = os.getenv("DEEPSEEK_API_KEY", "")
+    print(f"[Blzazw] LLM call: model={model}, key_set={'yes' if key and len(key) > 8 else 'no'}, tools={len(tools) if tools else 0}")
 
     kwargs = {
         "model": model,
         "messages": messages,
+        "timeout": 120,
     }
     if tools:
         kwargs["tools"] = tools
 
-    response = await client.chat.completions.create(**kwargs)
-    return _parse_response(response)
+    # 自动重试两次（应对 VPN 不稳定）
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            response = await client.chat.completions.create(**kwargs)
+            result = _parse_response(response)
+            print(f"[Blzazw] LLM response: has_tool_calls={result.has_tool_calls()}, content_len={len(result.content or '')}")
+            return result
+        except Exception as e:
+            print(f"[Blzazw] LLM error (attempt {attempt+1}/{max_attempts}): {type(e).__name__}: {e}")
+            if attempt < max_attempts - 1:
+                import asyncio
+                await asyncio.sleep(2)
+                continue
+            raise
 
 
 async def chat_stream(

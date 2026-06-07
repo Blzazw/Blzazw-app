@@ -31,7 +31,7 @@ else:
 # 检查 API Key（不是致命错误，仅警告）
 api_key = os.getenv("DEEPSEEK_API_KEY", "")
 if not api_key or api_key == "sk-your-api-key-here":
-    print("⚠️  未检测到 DeepSeek API Key")
+    print("[Blzazw] 未检测到 DeepSeek API Key")
     print("   请在 Blzazw 设置页面中配置 API Key")
     print("   获取 Key: https://platform.deepseek.com/api_keys")
 

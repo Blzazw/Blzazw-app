@@ -264,6 +264,7 @@ export default function App() {
         },
         onError: (msg) => {
           console.error('Chat error:', msg)
+          addAgentMessage(`[错误] ${msg}`)
         },
         onComplete: () => {
           loadSessions()
